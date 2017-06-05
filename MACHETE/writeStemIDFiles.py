@@ -1,70 +1,45 @@
 # -*- coding: utf-8 -*-
-"""
+'''
 Created on Thu Feb  4 10:59:42 2016
 
 @author: Gillian
-"""
+@editor: Rob
+'''
 
 import argparse
 import glob
+import sys
 import os
+import re
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-o", "--origDir", required=True, help = "orig directory")
-parser.add_argument("-f", "--FJDir", required=True, help = "Far Junctions Directory")
+parser.add_argument('-o', '--origDir', required=True, help='orig directory')
+parser.add_argument('-f', '--FJDir', required=True, help='Far Junctions Directory')
 args = parser.parse_args()
 
+#RB: 3/22/17 changed it to look in unaligned for denovo
+FileList = glob.glob(os.path.join(args.origDir,'unaligned/forDenovoIndex/*'))
+FileList = [os.path.basename(name) for name in FileList]
+FileList = [name for name in FileList if 'sorted' not in name]
+FileList = sorted(FileList)
 
-if args.origDir[-1] != "/":
-    args.origDir += "/"
-    
-if args.FJDir[-1] != "/":
-    args.FJDir += "/"
-    
-# change the input path to the path where your file exists
-os.chdir(args.origDir)
-
-FoutStems=open(args.FJDir + "/StemList.txt", mode="w")
-
-FileList=[]
-FileListPairs={}
-FileListEntries=[]
-#
-##create file list of paired files
-#for name in glob.glob(args.origDir+"genome/*.sam"):
-#    if "sorted" not in name:    
-#        (inDir,filename)=os.path.split(name)
-#        if filename not in FileList:
-#            FileList[filename] =0
-#        FileList[filename]+=1
-##print FileList
-
-for name in glob.glob(args.origDir+"genome/*.sam"):
-    if "sorted" not in name:
-        (inDir,filename)=os.path.split(name)
-        FileList.append(filename)
-
-#print FileList
-#print len(FileList[0].split("_"))-3
-
-Counter=len(FileList)
-#print Counter
-
-while Counter!=0:
-    firstEntry=FileList[0].split("_")[:-3]
-    for i in range(1,Counter):
-        compareEntry=FileList[i].split("_")[:-3]      
-        if firstEntry==compareEntry:
-            Stem="_".join(firstEntry)
-#            print Stem
-            FoutStems.write(Stem+"\n")
-
-            del FileList[0]
-            del FileList[i-1]
-            Counter = Counter-2
-            break
-            
-    
-FoutStems.close()
+#Matches anything that has the following suffixes
+#(should only break on really treacherous names)
+#   _1.
+#   _2.
+#   _r1.
+#   _r2.
+#   _R1.
+#   _R2.
+fastq_pattern = r'_[r|R]?[1|2]+\.'
+FileList = sorted(FileList)
+with open(os.path.join(args.FJDir,'StemList.txt'),'w') as FoutStems:
+    for ind in range(len(FileList)-1):
+        prefix_1,_ = re.split(fastq_pattern,FileList[ind])
+        prefix_2,_ = re.split(fastq_pattern,FileList[ind+1])
+        if prefix_1 == prefix_2:
+            Stem = prefix_1.replace('unaligned_','')
+            FoutStems.write(Stem+'\n')
+        
             
 

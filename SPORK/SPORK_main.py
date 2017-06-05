@@ -47,9 +47,10 @@ parser.add_argument("--output-dir",required=True,dest="output_dir",help="Output 
                     "(i.e. '/scratch/PI/horence/rob/spachete_outputs/normal_fetal')")
 parser.add_argument("--ref-dir",required=True,dest="ref_dir",help="Directory with bowtie2 indices of the desired genome, same as " \
                     "MACHETE CIRCREF (i.e. '/share/PI/horence/circularRNApipeline_Cluster/index')")
+parser.add_argument("--flank-len",required=False,dest="flank_len",help="5' and 3' flank length to use in SPACHETE, defaults to 25")
 parser.add_argument("--stem-name",required=False,dest="stem_name",help="Stem name for SPORK use in SPACHETE " \
                     "to restrict SPORK from working on all the R1 files (i.e. 'SRR3192409')")
-parser.add_argument("--flank-len",required=False,dest="flank_len",help="Flanking length on either side of the junction " \
+parser.add_argument("--splice-flank-len",required=False,dest="splice_flank_len",help="Flanking length on either side of the junction " \
                     "splice site. For example a flank len of 150 results in 300bp long junctions reported.",type=int)
 parser.add_argument("--mode",required=False,dest="mode",help="Mode is the reference to use to align to, note that the proper " \
                     "bowtie2 indices and gtf file must exist in the indices folder. Defaults to hg19 (human genome)")
@@ -59,8 +60,9 @@ root_dir = args.root_dir
 input_dir = args.input_dir
 output_dir = os.path.join(args.output_dir,"spork_out")
 ref_dir = args.ref_dir
+flank_len = args.flank_len
 stem_name = args.stem_name
-splice_flank_len = args.flank_len
+splice_flank_len = args.splice_flank_len
 mode = args.mode
 
 #Check if there is an orig in the right spot
@@ -70,6 +72,8 @@ if not os.path.exists(orig_dir):
     sys.exit(1)
 
 #Set defaults if not given
+if not flank_len:
+    flank_len = "25"
 if not splice_flank_len:
     splice_flank_len = 150
 if not mode:
@@ -79,7 +83,7 @@ if not mode:
 # Constants #
 #############
 bin_size = 50                           #size of bins in bps to split ref into
-group_member_cutoff = 2                 #minimum number of reads that need to map to a bin pair
+group_member_cutoff = 1                 #minimum number of reads that need to map to a bin pair
 consensus_score_cutoff = 0.5            #relates to the number of mismatches in consensus
 span_cutoff = 1e5                       #minimum span distance to be classified a "fusion"
 at_boundary_cutoff = 2                  #maximum distance to be away from a boundary for fusion classification
@@ -94,13 +98,14 @@ mq_cutoff = 35                          #map-quality cutoff of adding the two re
 mq_len = 25                             #how long of a sequence to take 5' and 3' of splice ind for mq check
 filter_mq = False                       #toggle to control whether or not to mapq
 
-thirds_len = 25                         #length to cut the original reads into for the 5' and 3' pieces:
+thirds_len = int(flank_len)             #length to cut the original reads into for the 5' and 3' pieces:
                                         #   |-------|---------------|-------|
                                         #       ^     unused middle     ^
                                         #       |                       |
                                         # len(5' piece) == thirds_len   |   
                                         #                          len(3' piece) == third_len
 
+splice_finding_flank = 30               #how long to make the pieces in splice site identification
 splice_finding_min_score = min_score    #can make more stringent for splice site finding
 splice_finding_allowed_mappings = "1"   #just making this adjustable, probably want to stay at 1
 splice_finding_allowed_mismatches = "1" #used to find high quality splice sites
@@ -173,6 +178,7 @@ constants_dict = {"root_dir":root_dir,
                   "splice_finding_min_score":splice_finding_min_score,
                   "read_gap_score":read_gap_score,
                   "min_bases_per_col":min_bases_per_col,
+                  "splice_finding_flank":splice_finding_flank,
                   "splice_finding_allowed_mismatches":splice_finding_allowed_mismatches,
                   "unaligned_path":unaligned_path,
                   "splice_finding_allowed_mappings":splice_finding_allowed_mappings,
@@ -417,16 +423,24 @@ for file_name in file_names:
 
         # Write out the ids of the reads used to build junctions
         used_read_ids_name = os.path.join(output_dir,"used_read_ids.txt")
+        read_ids_per_jct_name = os.path.join(output_dir,"reads_in_jcts.txt")
         with open(used_read_ids_name,"w") as used_read_ids:
-            for jct in denovo_junctions:
-                for bin_pair in jct.bin_pair_group:
-                    used_read_id = bin_pair.five_prime_SAM.read_id
-                    used_read_id = used_read_id[:-3] #To get rid of the " R1" or " R2" added previously
-                    used_read_ids.write(used_read_id+"\n")
+            with open(read_ids_per_jct_name,'w') as ids_per_jct:
+                for jct in denovo_junctions:
+                    ids_per_jct.write("Jct ID: "+str(jct.jct_ind)+"\n")
+                    for bin_pair in jct.bin_pair_group:
+                        used_read_id = bin_pair.five_prime_SAM.read_id
+                        used_read_id = used_read_id[:-3] #To get rid of the " R1" or " R2" added previously
+                        used_read_ids.write(used_read_id+"\n")
+                        ids_per_jct.write("\t"+used_read_id+"\n")
 
         # Find the splice indicies of the junctions
         start_find_splice_inds = time.time()
-        denovo_junctions,no_splice_jcts = find_splice_inds(denovo_junctions,constants_dict)
+
+        #NOTE!!! RB: 5/30/17 made a new splicing function called find_splice_inds_v2 in SPORK_utils.py
+        #denovo_junctions,no_splice_jcts = find_splice_inds(denovo_junctions,constants_dict)
+        denovo_junctions,no_splice_jcts = find_splice_inds_v2(denovo_junctions,constants_dict)
+
         write_time("-Found splice indices of "+str(len(denovo_junctions))+" junctions",start_find_splice_inds,timer_file_path)
         sys.stdout.write("SPORK: found splice indices. ["+str(len(denovo_junctions))+"] w/ splice and ["+str(len(no_splice_jcts))+"] w/out splice\n")
 
@@ -466,8 +480,8 @@ for file_name in file_names:
         for jct_ind in range(len(denovo_junctions)):
             forward_jct = forward_jcts[jct_ind]
             reverse_jct = reverse_jcts[jct_ind]
-            sys.stdout.write(str(forward_jct)+"\n")
-            sys.stdout.flush()
+            #sys.stdout.write(str(forward_jct)+"\n")
+            #sys.stdout.flush()
             forward_dist = abs(forward_jct.boundary_dist("donor"))+abs(forward_jct.boundary_dist("acceptor"))
             reverse_dist = abs(reverse_jct.boundary_dist("donor"))+abs(reverse_jct.boundary_dist("acceptor"))
             
@@ -518,8 +532,8 @@ for file_name in file_names:
         #Look through the fusions and see if they can better be explained by splicing
         #This is 'badfj3'
         start_badfj3 = time.time()
-        still_fusions,now_jcts = badfj3_fusions(fusion_junctions,constants_dict)
-        sys.stdout.write("SPORK: Number of badfj3 fusion jcts found = "+str(len(now_jcts))+"\n")
+        denovo_junctions = badfj3_fusions(denovo_junctions,constants_dict)
+        #sys.stdout.write("SPORK: Number of badfj3 fusion jcts found = "+str(len(denovo_jcts))+"\n")
         write_time("Time for badfj3 "+R_file_name,start_badfj3,timer_file_path)
         #NOTE not yet using the output of badfj3
 

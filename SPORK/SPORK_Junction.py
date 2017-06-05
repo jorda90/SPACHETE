@@ -7,7 +7,8 @@ import sys
 
 #Junction class
 class Junction(object):
-    __slots__ = ["consensus","score","bin_pair","bin_pair_group","took_reverse_compliment","constants_dict",
+    __slots__ = ["consensus","score","bin_pair","bin_pair_group",
+                 "took_reverse_compliment","constants_dict","badfj3",
                  "donor_sam","acceptor_sam","mapq","jct_ind"]
 
     def __init__(self,consensus,score,bin_pair_group,jct_ind,took_reverse_compliment,constants_dict):
@@ -31,6 +32,7 @@ class Junction(object):
         self.took_reverse_compliment = took_reverse_compliment
         self.constants_dict = constants_dict
         self.mapq = 0
+        self.badfj3 = False
 
         #Find chromosome, bin_pair and strand info from the first mapped read
         rep_bin_pair = self.bin_pair_group[0]
@@ -78,12 +80,17 @@ class Junction(object):
 
         Returns:
             the distance between the 3' end of the donor and 5' end of the acceptor
-            if one or both of the sam's are undefined return -1
+            if one or both of the sam's are undefined return None
         """
         if self.donor_sam.exists and self.acceptor_sam.exists:
-            donor_pos = self.consensus.index(self.donor_sam.seq)+len(self.donor_sam.seq)
-            acceptor_pos = self.consensus.index(self.acceptor_sam.seq)
-            return donor_pos-acceptor_pos
+            #RB 5/26/17: Having strange index errors, I think going by lengths is equivalent
+            return len(self.consensus)-len(self.donor_sam.seq)-len(self.acceptor_sam.seq)
+
+            #sys.stderr.write(self.consensus+':  '+self.donor_sam.seq+'\n')
+            #donor_pos = self.consensus.index(self.donor_sam.seq)+len(self.donor_sam.seq)
+            #sys.stderr.write(self.consensus+':  '+self.acceptor_sam.seq+'\n')
+            #acceptor_pos = self.consensus.index(self.acceptor_sam.seq)
+            #return donor_pos-acceptor_pos
         else:
             return None
 
@@ -179,9 +186,9 @@ class Junction(object):
         #Get the revreg type
         if strand == "inversion":
             revreg = "invert"
-        elif self.donor_sam.donor < self.acceptor_sam.acceptor and self.donor_sam.strand == "+":
+        elif self.donor_sam.donor() < self.acceptor_sam.acceptor() and self.donor_sam.strand == "+":
             revreg = "reg"
-        elif self.donor_sam.donor > self.acceptor_sam.acceptor and self.donor_sam.strand == "-":
+        elif self.donor_sam.donor() > self.acceptor_sam.acceptor() and self.donor_sam.strand == "-":
             revreg = "reg"
         else:
             revreg = "rev"
@@ -291,6 +298,7 @@ class Junction(object):
         three_prime_chr = three_prime_bin.split(":")[0]
         three_prime_bin = three_prime_bin.split(":")[1]
         linear = True if int(five_prime_bin) <= int(three_prime_bin) else False
+        #RB 04/25/17: I'm not sure this is correct, took_reverse_compliment is always False
         linear = not linear if self.took_reverse_compliment else linear
         return linear
 
@@ -411,6 +419,7 @@ class Junction(object):
         fasta_str += ",don-dist:"+str(self.boundary_dist("donor"))
         fasta_str += ",acc-dist:"+str(self.boundary_dist("acceptor"))
         fasta_str += ",mapq="+str(self.mapq)
+        fasta_str += ",badfj3:"+str(self.badfj3)
         fasta_str += ",jct_ind="+str(self.jct_ind)
         fasta_str += "\n"
 
@@ -458,6 +467,7 @@ class Junction(object):
         fasta_str += "num:"+str(len(self.bin_pair_group))+"|"
         fasta_str += "splice:"+str(self.splice_type())+"|"
         fasta_str += "mapq="+str(self.mapq)+"|"
+        fasta_str += "badfj3:"+str(self.badfj3)+"|"
         fasta_str += "jct_ind:"+str(self.jct_ind)+"|\n"
 
         splice_flank_len = int(self.constants_dict["splice_flank_len"])
@@ -507,6 +517,7 @@ class Junction(object):
         fasta_str += "num:"+str(len(self.bin_pair_group))+"|"
         fasta_str += "splice-gap:"+str(self.splice_gap())+"|"
         fasta_str += "splice-type:"+str(self.splice_type())+"|"
+        fasta_str += "badfj3:"+str(self.badfj3)+"|"
         fasta_str += "took-rev-comp:"+str(self.took_reverse_compliment)+"|\n"
 
         # Add N padding to the consensus to get a uniform len
@@ -575,6 +586,7 @@ class Junction(object):
         out_str += "Donor on the "+str(self.donor_sam.strand)+" strand and acceptor on the "+str(self.acceptor_sam.strand)+"\n"
         out_str += "5' map position ["+str(self.donor_sam.start)+"-"+str(self.donor_sam.stop)+"]\n"
         out_str += "3' map position ["+str(self.acceptor_sam.start)+"-"+str(self.acceptor_sam.stop)+"]\n"
+        out_str += "badfj3:"+str(self.badfj3)+"\n"
         out_str += "Consensus with score ["+str(self.score)+"] and donor splice site ["+str(self.donor_sam.stop)+"]:\n"
         out_str += str(self.consensus)+"\n"
         out_str += str(self.donor_sam.seq)+"\n"

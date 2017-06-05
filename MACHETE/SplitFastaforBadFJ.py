@@ -45,5 +45,5 @@ for line in FastaFile:
     FastaOut_R2.write(line[-int(args.ReadLength):]+"\n")
 
 FastaFile.close()
-FastaOut_R1.close
+FastaOut_R1.close()
 FastaOut_R2.close()

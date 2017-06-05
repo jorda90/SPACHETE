@@ -205,6 +205,11 @@ for reportfile in glob.glob(reportsDir+ "*" + args.stem + "*naive*.txt"):
     for line_raw in f1:
         if line_raw[0] =="@":
             sys.stderr.write(str(FJ_GLM_Dict)) #RB: Adding print out, sometimes empty
+            #RB 04/10/17: in case it is empty, don't error, just skip
+            if "header" not in FJ_GLM_Dict:
+                sys.stderr.write('NOTE: Header not in FJ_GLM_DICT in appendNaiveRept\n')
+                continue
+
             fout.write(line_raw.strip()+"\t_1NoIndels:Indels\t_2NoIndels:Indels\tBadFJ=1\tBadFJv2=1\tExonL\tExonR\t"+ FJ_GLM_Dict["header"]+"\n")
             continue
 

@@ -1,4 +1,5 @@
 # General Imports
+from collections import defaultdict
 import subprocess
 import itertools
 import zlib
@@ -32,18 +33,18 @@ def get_reference_and_gtf_from_mode(ref_dir,abs_path,mode="hg19"):
 
     Returns:
         a tuple of (reference_path,gtf_path)
-        note that regardless of the mode it is currently
-        returning hg19 information
     """
     #index_path = "/scratch/PI/horence/rob/index/"
     #reference = index_path+"hg19"
     reference = ref_dir
     gtf_path = ""
     if mode == "hg19":
+        sys.stdout.write('SPORK: Reference using hg19\n')
         gtf_path = os.path.join(abs_path,"gtfs","hg19_gtfs")
         reference = os.path.join(reference,"hg19_genome")
 
     elif mode == "mm10":
+        sys.stdout.write('SPORK: Reference using mm10\n')
         gtf_path = os.path.join(abs_path,"gtfs","mm10_gtfs")
         reference = os.path.join(reference,"mm10_genome")
 
@@ -145,6 +146,8 @@ def build_junction_sequences(bin_pairs,bin_pair_group_ranges,full_path_name,cons
 
     # walk through each bin_pair_group
     write_time("Working on the bin-pairs :"+str(len(bin_pair_group_ranges)),time.time(),constants_dict["timer_file_path"])
+    num_fail_size = 0
+    num_fail_score = 0
     jct_ind = 0
     for bin_pair_group_range in bin_pair_group_ranges:
         #junction_num = "("+str(bin_pair_group_ranges.index(bin_pair_group_range)+1)+"/"+str(len(bin_pair_group_ranges))+")"
@@ -160,6 +163,7 @@ def build_junction_sequences(bin_pairs,bin_pair_group_ranges,full_path_name,cons
         if len(group_members) < group_member_cutoff:
             #sys.stderr.write("Skipped group in build junction seqs\n") #expecting to have filtered out before this
             #sys.stderr.write("len(group_members) == "+str(len(group_members))+"\n")
+            num_fail_size += 1
             continue
 
         # Otherwise start thinking about getting strandedness
@@ -191,8 +195,171 @@ def build_junction_sequences(bin_pairs,bin_pair_group_ranges,full_path_name,cons
             denovo_junction = Junction(bin_consensus,bin_score,group_members,jct_ind,took_reverse_compliment,constants_dict)
             denovo_junctions.append(denovo_junction)
             jct_ind += 1
+        else:
+            num_fail_score += 1
 
+
+
+    write_time("Filtered out bin-pairs by size < "+str(group_member_cutoff)+" :"+str(num_fail_size),time.time(),constants_dict["timer_file_path"])
+    write_time("Filtered out bin-pairs by score < "+str(consensus_score_cutoff)+" :"+str(num_fail_score),time.time(),constants_dict["timer_file_path"])
+    write_time("Number of jcts after build jcts: "+str(jct_ind),time.time(),constants_dict["timer_file_path"])
     return denovo_junctions
+
+##########################
+#   Find Splice Inds V2  #
+##########################
+# Runs bowtie on all of the possible splice sites of all possible junctions
+# Returns a dict keyed by jct_id and valued by a list of cut sites
+def find_splice_inds_v2(denovo_junctions,constants_dict):
+    """
+    Goal: find where in the consensus sequence to make and donor and acceptor cut
+    Arguments:
+        denovo_junctions is a list[Junction]
+        the constants_dict is a dictionary of global constants
+
+    Returns:
+        returns a tuple of (jcts_with_splice,jcts_without_splice)
+        to allow for continuing with only jcts that had a splice site found
+
+    Program flow:
+        1. Write all possible splice cuts for all possible
+           consensus seq jcts to a fasta file
+    
+        2. Map this file to the genome reference
+           --> Don't allow gaps
+           --> Report the best k unique multiple mappings for each read
+    
+        3. Look through the mapping file for each junction to find the best splice site
+           --> Preference should primarily be given to splits that map close to each other
+           --> Next preference is the most amount of the consensus successfully mapped
+    """
+    
+    #Get parameters from the constants_dict
+    splice_fasta_path = os.path.join(constants_dict["output_dir"],"putative_splices.fa")
+    splice_mapped_path = os.path.join(constants_dict["output_dir"],"putative_splices.sam")
+    flank_len = constants_dict["splice_finding_flank"]
+    min_score = constants_dict["splice_finding_min_score"]
+    max_mismatches = int(constants_dict["splice_finding_allowed_mismatches"])
+    read_gap_score = constants_dict["read_gap_score"]
+    ref_gap_score = constants_dict["ref_gap_score"]
+    num_threads = constants_dict["num_threads"]
+    reference = constants_dict["reference"]
+    use_prior = constants_dict["use_prior"]
+    timer_file_path = constants_dict["timer_file_path"]
+    n_multimap = "10"
+
+    #1. Write all possible splice cuts for all possible jcts to a fasta
+    #   if seq is abcdefghijklmnopqrstuvwxyz and thirds_len = 10 then you would want:
+    #       [abcdefghij]|[klmnopqrst]uvwxyz
+    #       a[bcdefghijk]|[lmnopqrstu]vwxyz
+    #       ab[cdefghijkl]|[mnopqrstuv]wxyz
+    #       abc[defghijklm]|[nopqrstuvw]xyz
+    #       abcd[efghijklmn]|[opqrstuvwx]yz
+    #       abcde[fghijklmno]|[pqrstuvwxy]z
+    #       abcdef[ghijklmnop]|[qrstuvwxyz]
+    #   where the first [] group is don and second [] group is acc
+    with open(splice_fasta_path,'w') as splice_fasta:
+        for jct in denovo_junctions:
+            seq = jct.consensus
+            jct_ind = jct.jct_ind
+            for split_ind in range(flank_len,len(seq)-flank_len):
+                don_seq = seq[:split_ind][-flank_len:]
+                acc_seq = seq[split_ind:][:flank_len]
+                base_header = '>'+str(jct_ind)+'_'+str(split_ind)
+
+                splice_fasta.write(base_header+'_don\n'+don_seq+'\n')
+                splice_fasta.write(base_header+'_acc\n'+acc_seq+'\n')
+
+    #2. Map the splice fasta to the genome reference
+    with open(splice_mapped_path,"w") as splice_mapped:
+        subprocess.call(
+            ["bowtie2", "-f", "--no-sq", "--no-hd", "--no-unal", min_score, read_gap_score,
+             ref_gap_score,"-p", num_threads, "-k", n_multimap, "-x", reference, splice_fasta_path],
+            stdout=splice_mapped)
+
+
+    #3. Look through the mapping file for each junction to find the best splice site
+    #   no sorting guarantees so have to read all in at once
+    #   (could pre-sort if this is too mem intensive)
+
+    #Maybe this is poor coding, but splice_dict is a 3-deep default dictionary
+    #   the 1st level is the jct_index
+    #   the 2nd level is the splice_index
+    #   the 3rd level is either 'don' or 'acc'
+    #Could have made a flat dict with a combination key of the levels
+    #   but then I would have to keep track of what the jct and splice indices are
+    splice_dict = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    with open(splice_mapped_path,"r") as splice_mapped:
+        for line in splice_mapped:
+            sam = SAMEntry(line)
+            jct_ind,split_ind,kind = sam.read_id.split('_')
+            splice_dict[jct_ind][split_ind][kind].append(sam)
+   
+    #Internal splice comparing function 
+    def compare_don_acc(best_don,best_acc,test_don,test_acc):
+        #None case
+        if best_don == None and best_acc == None:
+            return test_don,test_acc
+
+        #If one pair is on the same chr and the other is not
+        best_same_chr = best_don.chromosome == best_acc.chromosome
+        test_same_chr = test_don.chromosome == test_acc.chromosome
+        if test_same_chr and not best_same_chr:
+            return test_don,test_acc
+        if best_same_chr and not test_same_chr:
+            return best_don,best_acc
+
+        #NOTE could extend this to do strand comparisons
+
+        #Now the pairs share chr status determine by which dropped less sequence
+        best_len = len(best_don.seq)+len(best_acc.seq)
+        test_len = len(test_don.seq)+len(test_acc.seq)
+        if best_len > test_len:
+            return best_don,best_acc
+        if test_len > best_len:
+            return test_don,test_acc
+
+        #Now determine by number of mismatches
+        best_mismatches = best_don.num_mismatches+best_acc.num_mismatches
+        test_mismatches = test_don.num_mismatches+test_acc.num_mismatches
+        if best_mismatches > test_mismatches:
+            return test_don,test_acc
+        else:
+            return best_don,best_acc
+        
+
+    #Loop through the jcts looking throughout the entire splice_dict
+    jcts_with_splice = []
+    jcts_wout_splice = []
+
+    for jct in denovo_junctions:
+        best_don,best_acc = None,None
+        jct_ind = str(jct.jct_ind)
+        for splice_ind in splice_dict[jct_ind]:
+            dons = splice_dict[jct_ind][splice_ind]['don']
+            accs = splice_dict[jct_ind][splice_ind]['acc']
+            
+            #NOTE Just a print out to check for multimappings
+            if len(dons) > 1 or len(accs) > 1:
+                sys.stdout.write('MULTIMAPPING: '+jct_ind+'_'+splice_ind+'\n')
+
+            for don,acc in itertools.product(dons,accs):
+                best_don,best_acc = compare_don_acc(best_don,best_acc,don,acc)
+        
+        #If there is no splice
+        if best_don == None or best_acc == None:
+            jcts_wout_splice.append(jct)
+            continue
+
+        #Otherwise update jct data
+        jct.consensus = best_don.seq+best_acc.seq
+        jct.donor_sam = best_don
+        jct.acceptor_sam = best_acc
+        jcts_with_splice.append(jct)
+
+    #Return the jcts
+    sys.stdout.write('WITH SPLICE: '+str(len(jcts_with_splice))+' WOUT SPLICE:'+str(len(jcts_wout_splice))+'\n')
+    return jcts_with_splice,jcts_wout_splice
 
 
 ########################
@@ -250,8 +417,11 @@ def find_splice_inds(denovo_junctions,constants_dict):
             splice_map_size = thirds_len
             #sys.stderr.write("Cons len "+str(cons_len)+" and thirds_len "+str(splice_map_size)+"\n")
  
-            five_prime_list = [junction.consensus[ind:ind+splice_map_size] for ind in range(0,cons_len-2*splice_map_size+1)]
-            three_prime_list = [junction.consensus[ind:ind+splice_map_size] for ind in range(splice_map_size,cons_len-splice_map_size+1)]
+            five_prime_list = [junction.consensus[ind:ind+splice_map_size]
+                               for ind in range(0,cons_len-2*splice_map_size+1)]
+
+            three_prime_list = [junction.consensus[ind:ind+splice_map_size]
+                                for ind in range(splice_map_size,cons_len-splice_map_size+1)]
 
             #Oh this is my problem, sometimes the consensus length is too small
             #to try and find splice inds from, so I should just throw that out and iterate,
@@ -263,6 +433,7 @@ def find_splice_inds(denovo_junctions,constants_dict):
 
             five_prime_fa_list = [">jct_"+str(jct_ind)+"_ind_"+str(ind)+"\n"
                                   +five_prime_list[ind] for ind in range(len(five_prime_list))]
+
             three_prime_fa_list = [">jct_"+str(jct_ind)+"_ind_"+str(ind)+"\n"
                                    +three_prime_list[ind] for ind in range(len(three_prime_list))]
 
@@ -279,12 +450,29 @@ def find_splice_inds(denovo_junctions,constants_dict):
         # Need to specify the -f flag because the inputs are fasta files
         with open(five_prime_mapped_name,"w") as five_prime_mapped:
             subprocess.call(
-                ["bowtie2", "-f", "--no-sq", "--no-unal", min_score, read_gap_score, ref_gap_score, "-p", num_threads,
-                 "-x", reference, five_prime_fa_file], stdout=five_prime_mapped)
+                ["bowtie2", "-f", "--no-sq", "--no-unal", min_score, read_gap_score, ref_gap_score,
+                 "-p", num_threads,"-x", reference, five_prime_fa_file], stdout=five_prime_mapped)
+
         with open(three_prime_mapped_name,"w") as three_prime_mapped:
             subprocess.call(
-                ["bowtie2", "-f", "--no-sq", "--no-unal", min_score, read_gap_score, ref_gap_score, "-p", num_threads,
-                 "-x", reference, three_prime_fa_file], stdout=three_prime_mapped)
+                ["bowtie2", "-f", "--no-sq", "--no-unal", min_score, read_gap_score, ref_gap_score,
+                 "-p", num_threads,"-x", reference, three_prime_fa_file], stdout=three_prime_mapped)
+
+        # Map the temp files above to the reference and save in temp sam files
+        # Need to specify the -f flag because the inputs are fasta files
+        """
+        n_multimap = "10"
+        with open(five_prime_mapped_name,"w") as five_prime_mapped:
+            subprocess.call(
+                ["bowtie2", "-f", "--no-sq", "--no-unal", min_score, read_gap_score, ref_gap_score,
+                 "-p", num_threads, "-k", n_multimap, "-x", reference, five_prime_fa_file], stdout=five_prime_mapped)
+
+        with open(three_prime_mapped_name,"w") as three_prime_mapped:
+            subprocess.call(
+                ["bowtie2", "-f", "--no-sq", "--no-unal", min_score, read_gap_score, ref_gap_score,
+                 "-p", num_threads, "-k", n_multimap, "-x", reference, three_prime_fa_file], stdout=three_prime_mapped)
+        """
+
 
         # Sort the temp output files after removing the header lines
         p1 = subprocess.Popen(["grep","-v","@",five_prime_mapped_name],stdout=subprocess.PIPE)
@@ -339,8 +527,13 @@ def find_splice_inds(denovo_junctions,constants_dict):
         else:
             #RB 11/18/16 Filter out 5' and 3' sams if chroms are not the same as the unsplit
             #RB 11/21/16 Also imposing a radius on the same chromosome filter (start at 30, very tight)
+            #RB 05/26/17 Actually I don't want to impose this restriction, would be ok with
+            #            different alignments than the original
+            #            this boils down to just commenting out this 'extra' filtering
             radius = 30
             pj = denovo_junctions[prev_jct_ind]
+
+            """
             sam_five_list = [sam for sam in sam_five_list
                              if (sam.chromosome == pj.donor_sam.chromosome and 
                                  abs(pj.donor_sam.start-sam.start) < radius)]
@@ -348,10 +541,12 @@ def find_splice_inds(denovo_junctions,constants_dict):
             sam_three_list = [sam for sam in sam_three_list
                               if (sam.chromosome == pj.acceptor_sam.chromosome and 
                                   abs(pj.acceptor_sam.start-sam.start) < radius)]
+            """
             
             # Get the best 5' and 3' pair of Sams
             prev_consensus = pj.consensus
-            best_five,best_three = get_best_splice(sam_five_list,sam_three_list,prev_consensus,max_mismatches)
+            #best_five,best_three = get_best_splice(sam_five_list,sam_three_list,prev_consensus,max_mismatches)
+            best_five,best_three = get_multi_best_splice(sam_five_list,sam_three_list,prev_consensus,max_mismatches)
 
             best_splices[prev_jct_ind] = [best_five,best_three]
             sam_five_list = []
@@ -364,7 +559,8 @@ def find_splice_inds(denovo_junctions,constants_dict):
     sam_five_list = [sam for sam in sam_five_list if sam.chromosome == pj.donor_sam.chromosome]
     sam_three_list = [sam for sam in sam_three_list if sam.chromosome == pj.acceptor_sam.chromosome]
  
-    best_five,best_three = get_best_splice(sam_five_list,sam_three_list,prev_consensus,max_mismatches)
+    #best_five,best_three = get_best_splice(sam_five_list,sam_three_list,prev_consensus,max_mismatches)
+    best_five,best_three = get_multi_best_splice(sam_five_list,sam_three_list,prev_consensus,max_mismatches)
     best_splices[prev_jct_ind] = [best_five,best_three]
     
     # Close the 5' and 3' sam files
@@ -474,6 +670,97 @@ def get_best_splice(sam_five_list,sam_three_list,consensus,max_mismatches):
         if sam_three.read_id in id_dict:
             sam_five = id_dict[sam_three.read_id]
             shared_dict[sam_three.read_id] = [sam_five,sam_three]
+
+    # Now pick out the best sam's to use
+    # If there is at least one shared perfect splice ind find the one w/ least mismatches
+    # then choose the perfect pair that has the least mismatches
+    if len(shared_dict) > 0:
+        best_key = ""
+        min_mismatches = max_mismatches+1
+        for key in shared_dict:
+            sam1,sam2 = shared_dict[key]
+            num_mismatches = sam1.num_mismatches+sam2.num_mismatches
+            if best_key == "" or num_mismatches < min_mismatches:
+                best_key = key
+                min_mismatches = num_mismatches
+        best_five_sam,best_three_sam = shared_dict[best_key]
+        return best_five_sam,best_three_sam
+
+    # Otherwise there is a mapping for the left and right pieces, although there is space in between
+    # NOTE is it possible that the best 5' and 3' seqs have overlap in the middle?
+    else:
+        return best_sam_five,best_sam_three
+
+#############################
+#   Get Multi Best Splice   #
+#############################
+# This is a helper function for the splice site finder that takes into account
+# If there are multiple found splice, return the best from the shared sams dict from the two sam lists
+def get_multi_best_splice(sam_five_list,sam_three_list,consensus,max_mismatches):
+    """
+    Goal: given a list of possible splice, return the best one for a junction
+    Arguments:
+        sam_five_list is a list[SAMEntry] for possible 5' cuts
+        sam_three_list is a list[SAMEntry] for possible 3' cuts
+        consensus is a str and the consensus sequence of this junction
+        max_mismatches is the maximum allowed mismatches in total for the 5' and 3' sides
+
+    Returns:
+        a tuple of the (best_5'_sam,best_3'_sam) to then be stored in the junction
+    """
+    shared_dict = defaultdict(list)
+    sam_fives = defaultdict(list)
+    sam_threes = defaultdict(list)
+    best_sam_five = SAMEntry()
+    best_sam_five_len = 0
+    best_sam_three = SAMEntry()
+    best_sam_three_len = 0
+
+    # Populate the sam_fives to find perfectly matched 5' and 3' splices
+    # Also keep track of the best (longest) 5' mapping
+    for sam_five in sam_five_list:
+        sam_fives[sam_five.read_id].append(sam_five)
+        if len(sam_five.seq) > best_sam_five_len:
+            best_sam_five_len = len(sam_five.seq)
+            best_sam_five = sam_five
+
+    # Populate the sam_threes to find perfectly matched 5' and 3' splices
+    # Also keep track of the best (longest) 3' mapping
+    for sam_three in sam_three_list:
+        sam_threes[sam_three.read_id].append(sam_three)
+        if len(sam_three.seq) > best_sam_three_len:
+            best_sam_three_len = len(sam_three.seq)
+            best_sam_three = sam_three
+
+    # Check the id_dict to see if the 5' has a perfect 3' match
+    # Within the perfect match, if there are multi maps choose the one that is closest together
+    # NOTE the internal loop is O(n^2) but n = 10 right now so not too bad
+    for id_key in sam_fives:
+        if id_key in sam_threes:
+            fives = sam_threes[id_key]
+            threes = sam_threes[id_key]
+            
+            #For each split index propose the one where the 5' and 3' are the closest
+            #and put this in the shared_dict
+            best_five = fives[0]
+            best_three = threes[0]
+            for five in fives[1:]:
+                for three in threes[1:]:
+                    #If the current best are on different chroms
+                    if best_five.chromosome != best_three.chromosome:
+                        if five.chromosome == three.chromosome:
+                            best_five = five
+                            best_three = three
+
+                    #If the current best are on the same chroms
+                    else:
+                        if five.chromosome == three.chromosome:
+                            if abs(five.start-three.start) < abs(best_five.start-best_three.start):
+                                best_five = five
+                                best_three = three
+
+            shared_dict[id_key] = [best_five,best_three]
+
 
     # Now pick out the best sam's to use
     # If there is at least one shared perfect splice ind find the one w/ least mismatches
@@ -1079,10 +1366,94 @@ def collapse_junctions(jcts,full_path_name,constants_dict,group_out_file_name=No
 
     return singles,groups
  
-   
-##########################
-#     Badfj3 fusions     #
-##########################
+ 
+########################
+#   Badfj3 fusions     #
+########################
+def badfj3_fusions(junctions,constants_dict):
+
+    #Bowtie params
+    min_score = constants_dict["splice_finding_min_score"]
+    read_gap_score = constants_dict["read_gap_score"]
+    ref_gap_score = constants_dict["ref_gap_score"]
+    num_threads = constants_dict["num_threads"]
+    reference = constants_dict["reference"]
+
+    #Build up file stems
+    badfj3_stem = os.path.join(constants_dict["output_dir"],"badfj3_")
+    don_fasta = badfj3_stem+"don.fasta"
+    acc_fasta = badfj3_stem+"acc.fasta"
+    badfj3_mapped = badfj3_stem+"mapped.sam"
+
+    #Open the R1 and R2
+    don_fasta_f = open(don_fasta,"w")
+    acc_fasta_f = open(acc_fasta,"w")
+
+    #Build up the "paired end" files
+    jct_dict = {}
+    for jct in junctions:
+        jct_dict[jct.jct_ind] = jct
+        header = ">"+str(jct.jct_ind)
+        break_point = jct.splice_ind()
+        don = jct.consensus[:break_point]
+        acc = jct.consensus[break_point:]
+
+        #RB: 5/26/17 Change this to map just the first and last 20 bases
+        #don_fasta_f.write(header+"\n"+don+"\n")
+        #acc_fasta_f.write(header+"\n"+acc+"\n")
+        don_fasta_f.write(header+"\n"+don[:20]+"\n")
+        acc_fasta_f.write(header+"\n"+acc[-20:]+"\n")
+
+
+    #Close the R1 and R2 fastqs
+    don_fasta_f.close()
+    acc_fasta_f.close()
+
+    badfj3_gap = "500000" #If the don/acc can map within 1/2 Mb, then jct not fusion
+
+    #Run bowtie2 on the R1 and R2
+    with open(badfj3_mapped,"w") as badfj3_mapped_f:
+        subprocess.call([
+                            "bowtie2", "-f", "--no-sq", "--no-unal","--no-mixed","--no-hd",
+                            min_score, read_gap_score, ref_gap_score, "-p", num_threads,
+                            "-x", reference, "-X", badfj3_gap, "--ff", "-1",
+                            don_fasta, "-2", acc_fasta
+                        ],
+                        stdout=badfj3_mapped_f)
+
+
+    #Read back the sam file
+    flags = ["paired","proper","no_align","paired_no_align","minus","mate_minus","R1","R2"]
+    seen_jct_inds = []
+    with open(badfj3_mapped,"r") as badfj3_mapped_f:
+        for line in badfj3_mapped_f:
+            #NOTE this is a sloppy way of parsing a PE SAM file (should use samtools view)
+            split_line = line.split('\t')
+            jct_ind = int(split_line[0])
+            flag = int(split_line[1])
+
+            #Does sloppy binary flag parsing
+            jct_flags = {flags[ind]:bool(int(bit)) for ind,bit in enumerate(format(flag,"08b"))}
+
+            #If it didn't align, then just skip it, it can't be a badfj3
+            if jct_flags["no_align"] or jct_flags["paired_no_align"]:
+                continue
+            #If it did align AND it has already been seen this is a badfj3
+            elif jct_ind in seen_jct_inds:
+                jct_dict[jct_ind].badfj3 = True
+            #If it did align but has not already been seen put it in the see_jct_inds
+            else:
+                seen_jct_inds.append(jct_ind)
+            
+    return junctions
+
+
+
+  
+############################
+#   Old Badfj3 fusions     #
+############################
+"""
 def badfj3_fusions(fusion_junctions,constants_dict):
 
     #Bowtie params
@@ -1133,7 +1504,7 @@ def badfj3_fusions(fusion_junctions,constants_dict):
             print line #NOTE!!! need to see how PE output looks
 
     return still_fusions,now_jcts
-
+"""
 
 ##########################
 #   Reverse Compliment   #

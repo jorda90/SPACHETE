@@ -8,6 +8,7 @@ test_*
 *.bt2
 *.ebwt
 *.pdf
+*.gtf
 
 # Compiled source #
 ###################
@@ -39,8 +40,8 @@ test_*
 *.sqlite
 *.out
 *.err
-.Rhistory
-.Rdata
+*.Rhistory
+*.Rdata
 
 # OS generated files #
 ######################

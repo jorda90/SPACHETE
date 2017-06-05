@@ -1,5 +1,6 @@
 from argparse import ArgumentParser
 from bisect import bisect_left
+import pandas as pd
 import subprocess
 import shutil
 import time
@@ -64,12 +65,14 @@ parser.add_argument("--numIndels",dest="NumIndels",type=int,default=5,help="Defa
 #parser.add_argument("--hg19Exons",required=True,dest="EXONS",help="Path to HG19Exons. Formerly called PICKLEDIR.")
 parser.add_argument("--reg-indel-indices",required=True,dest="REG_INDEL_INDICES",help="Path to files with names like hg19_junctions_reg_indels_1.1.bt2l,hg19_junctions_reg_indels_2.rev.1.bt2l ... These are sometimes in a folder called IndelIndices.")
 parser.add_argument("--circref-dir",required=True,dest="CIRCREF",help="Path to reference libraries output by KNIFE - directory that contains hg19_genome, hg19_transcriptome, hg19_junctions_reg and hg19_junctions_scrambled bowtie indices.")
+parser.add_argument("--flank-len",required=False,dest="SPORK_FLANK_LEN",help="5' and 3' flank length to use in SPACHETE, defaults to 25")
 
 args = parser.parse_args()
 ROOT_DIR = args.ROOT_DIR
 MACHETE_DIR = os.path.join(ROOT_DIR,'MACHETE')
 SPORK_DIR = os.path.join(ROOT_DIR,'SPORK')
 WRAPPERS_DIR = os.path.join(ROOT_DIR,'wrappers')
+SPORK_FLANK_LEN = args.SPORK_FLANK_LEN if args.SPORK_FLANK_LEN else "25"
 
 CIRCPIPE_DIR = args.CIRCPIPE_DIR
 MODE = args.MODE
@@ -83,6 +86,7 @@ NUMBASESAROUNDJUNC = args.NUMBASESAROUNDJUNC
 NumIndels = args.NumIndels
 #EXONS = args.EXONS #RB 3/13/17 Isn't being used, commenting out
 REG_INDEL_INDICES = args.REG_INDEL_INDICES
+REG_INDEL_INDICES = os.path.join(REG_INDEL_INDICES,MODE)
 CIRCREF = args.CIRCREF
 
 #end arg parsing
@@ -239,12 +243,14 @@ SPORK_OPTIONS = ""
 SPORK_OPTIONS += "--input-dir "+CIRCPIPE_DIR+" "
 SPORK_OPTIONS += "--output-dir "+OUTPUT_DIR+" "
 SPORK_OPTIONS += "--stem-name "+SPORK_STEM_NAME+" "
+SPORK_OPTIONS += "--flank-len "+SPORK_FLANK_LEN+" "
 spork_process = subprocess.Popen(["python",os.path.join(SPORK_DIR,"SPORK_main.py"),
                                     "--root-dir",ROOT_DIR,
                                     "--input-dir",CIRCPIPE_DIR,
                                     "--output-dir",OUTPUT_DIR,
                                     "--ref-dir",CIRCREF,
                                     "--mode",MODE,
+                                    "--flank-len",SPORK_FLANK_LEN,
                                     "--stem-name",SPORK_STEM_NAME],
                                     stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 spork_out,spork_err = spork_process.communicate()
@@ -581,6 +587,7 @@ for i in range(1,NUM_FILES + 1):
     ## Read gaps are disallowed in the first version of BadJuncs.  A second version of BadJuncs was created to also find genome/reg/junc/transcriptome alignments with gapped alignments.
     ## For BadFJ ver2 we use bowtie to align the reads1 and 2 as if they were paired end reads from the same strand.  We impose a minimum gap of 0 between the two and a maximum gap of 50,000 bases to allow up to a 50,000 base gapped alignment.
     badfj2_thresh = 500000 #RB 11/18/16: Updated this from 50,000 to 500,000
+    #RB 4/4/17 The r1file and r2file have to be made by this point, they are used as input to bowtie
     genomeBOWTIEPARAM = "--no-unal --no-mixed --no-sq -p 8 -I 0 -X {badfj2_thresh} -f --ff -x {genomeIndex} -1 {r1file} -2 {r2file} -S {BadFJver2Dir}/{STEM}_BadFJtoGenome.sam".format(badfj2_thresh=badfj2_thresh,genomeIndex=genomeIndex,r1file=r1file,r2file=r2file,BadFJver2Dir=BadFJver2Dir,STEM=STEM)
     transcriptomeBOWTIEPARAM = "--no-unal --no-mixed  --no-sq -p 8 -I 0 -X {badfj2_thresh} -f --ff -x {transcriptomeIndex} -1 {r1file} -2 {r2file} -S {BadFJver2Dir}/{STEM}_BadFJtotranscriptome.sam".format(badfj2_thresh=badfj2_thresh,transcriptomeIndex=transcriptomeIndex,r1file=r1file,r2file=r2file,BadFJver2Dir=BadFJver2Dir,STEM=STEM)
     regBOWTIEPARAM = "--no-unal --no-mixed --no-sq -p 8 -I 0 -X {badfj2_thresh} -f --ff -x {regIndex} -1 {r1file} -2 {r2file} -S {BadFJver2Dir}/{STEM}_BadFJtoReg.sam".format(badfj2_thresh=badfj2_thresh,regIndex=regIndex,r1file=r1file,r2file=r2file,BadFJver2Dir=BadFJver2Dir,STEM=STEM)
@@ -597,6 +604,8 @@ for i in range(1,NUM_FILES + 1):
         stdout = open(os.path.join(BadFJver2Dir,"out.txt"),"w")
         stderr = open(os.path.join(BadFJver2Dir,"err.txt"),"w")
         #RB: This call is failing 3/1/17, not finding STEM_FarJunctions_R1.fa (the R1 file)
+        #RB: 4/3/17 This is failing in Kami's hands but no longer failing for me could be upstream error
+        #RB: 4/3/17 the FarJunctions_R1.fa is not being made
         cmd = "{MACHETE_DIR}/BowtieAligner_BadFJv2.sh \"{genomeBOWTIEPARAM}\"".format(MACHETE_DIR=MACHETE_DIR,genomeBOWTIEPARAM=genomeBOWTIEPARAM)
         print(cmd)
         popen = subprocess.Popen(cmd,stdout=stdout,stderr=stderr,shell=True)
@@ -949,6 +958,57 @@ for index in range(1,NUM_FILES + 1):
 checkProcesses(processes)
 write_time("Append naive report "+str(index),start_time,timer_file_path)
 print("STATUS: done")
+
+#RB 04/26/17 add a few extra columns to the appended reports file
+#1) The junction consensus sequence
+#2) The emp_pvalue
+STEM_FILE = os.path.join(OUTPUT_DIR,"StemList.txt")
+jct_ind_p = r'jct_ind=(.*)'
+for index in range(NUM_FILES):
+    #Get the appended report location
+    STEM = None
+    with open(STEM_FILE,'r') as f:
+        STEM = f.readlines()[index].strip()
+    appended_report = os.path.join(OUTPUT_DIR,"reports","AppendedReports",str(STEM)+"_naive_report_Appended.txt")
+    print appended_report
+
+    #Build a dict of jct_ind to sequence
+    fasta_path = os.path.join(OUTPUT_DIR,"spork_out","novel_junctions.fasta")
+    print fasta_path
+    ind_to_seq = {}
+    with open(fasta_path,'r') as fasta_file:
+        while True:
+            header = fasta_file.readline()
+            if not header:
+                break
+            header = header.strip()
+            seq = fasta_file.readline().strip()
+            jct_ind = int(re.findall(jct_ind_p,header)[0])
+            ind_to_seq[jct_ind] = seq
+
+    #Add sequence data as an extra column to the appended report
+    df = pd.read_table(appended_report,sep='\t')
+    ordered_seqs = []
+    for jct_name in df['@Junction']:
+        jct_ind = int(re.findall(jct_ind_p,jct_name)[0])
+        ordered_seqs.append(ind_to_seq[jct_ind])
+        
+    df['seq'] = ordered_seqs
+    
+    #Add emp_p as an extra column
+    badfj1s = df[df['BadFJ=1'] == 1]
+    total_badfj1s = len(badfj1s)
+    emp_ps = []
+    for jct_cdf in df['junction_cdf.y']:
+        num_greater = sum(badfj1s['junction_cdf.y'] > jct_cdf)
+        emp_ps.append(float(num_greater)/total_badfj1s)
+
+    df['emp_p'] = emp_ps
+
+    #Write out the new appended report (overwrite the old one)
+    #df.to_csv(appended_report,sep='\t',index=False)
+    df.to_csv(appended_report+'.seq.emp_p',sep='\t',index=False)
+
 
 write_time("Full run time",full_time,timer_file_path)
 

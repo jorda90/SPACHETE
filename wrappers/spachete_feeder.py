@@ -14,7 +14,7 @@ description = "Required args: --root-dir, --circpipe-dir, --output-dir, --hg19Ex
 parser = ArgumentParser(description=description)
 parser.add_argument("--root-dir",required=True,dest="ROOT_DIR",help="Dir that run_MACHETE.sh is in")
 parser.add_argument("--circpipe-dir",required=True,dest="CIRCPIPE_DIR",help="Dir containing circ pipe output (incl linda's directories orig, circReads, logs, sample stats)")
-parser.add_argument("--mode",required=True,dest="MODE",help="How to run SPACHETE/MACHETE for human --> 'hg19', for mouse --> 'mm10'")
+parser.add_argument("--mode",required=True,dest="MODE",help="How to run SPACHETE/MACHETE for human --> 'hg19', for mouse --> 'mm10'", choices=['hg19','mm10','grch38'])
 parser.add_argument("--output-dir",required=True,dest="OUTPUT_DIR",help="Output directory for resuts. Directory path will be created recursively if it doesn't already exist. If it exists already, the directory will be deleted then created again.")
 parser.add_argument("--user-bp-dist",dest="USERBPDIST",type=int,default=1000,help="Default is %(default)s.")
 parser.add_argument("--num-junc-bases",dest="NUMBASESAROUNDJUNC",type=int,default=8,help="Default for linda's is 8 for read lengths < 70 and 13 for read lengths > 70.")
@@ -24,6 +24,7 @@ parser.add_argument("--reg-indel-indices",required=True,dest="REG_INDEL_INDICES"
 parser.add_argument("--circref-dir",required=True,dest="CIRCREF",help="Path to reference libraries output by KNIFE - directory that contains hg19_genome, hg19_transcriptome, hg19_junctions_reg and hg19_junctions_scrambled bowtie indices.")
 parser.add_argument("--stem-include-list",required=False,dest="STEM_INCLUDE_LIST",help="If only want to run some of the stems then define this, otherwise will run all the stems")
 parser.add_argument("--SLURM",required=False,dest="SLURM",help="Whether or not to submit to SLURM")
+parser.add_argument("--flank-len",required=False,dest="SPORK_FLANK_LEN",help="5' and 3' flank length to use in SPACHETE, defaults to 25")
 #parser.add_argument("REFGENOME",help="HG19 vs HG38;could upgrade to HG38.")
 
 
@@ -34,6 +35,9 @@ args = parser.parse_args()
 #  Whether or not to use SLURM  #
 #################################
 use_SLURM = True if args.SLURM else False
+SPORK_FLANK_LEN = args.SPORK_FLANK_LEN if args.SPORK_FLANK_LEN else "25"
+print 'In SPACHETE_feeder w/ FLANK',
+
 
 #################
 #  Build Paths  #
@@ -87,10 +91,14 @@ if include_stems:
 processes = []
 out_files = []
 err_files = []
+jnums = []
+max_slurm = 3
+
 with open(FullStemFile,"r") as stem_file:
     stems = stem_file.readlines()
-    for stem in sorted(stems):
+    for ind,stem in enumerate(sorted(stems)):
         stem = stem.strip()
+        print stem
         
         #If include_stems is not None then
         #skip all the stems not in the include stems list
@@ -153,7 +161,7 @@ with open(FullStemFile,"r") as stem_file:
             os.mkdir(AppendedReportsDir)
         appendGlmDir = os.path.join(GLM_DIR,"AppendGLM")
         if not os.path.isdir(appendGlmDir):
-            os.mkdir(os.path.join(GLM_DIR,"AppendGLM"))
+            os.makedirs(os.path.join(GLM_DIR,"AppendGLM"))
         GLM_classInputDir = os.path.join(OUTPUT_DIR,"GLM_classInput")
         if not os.path.exists(GLM_classInputDir):
             os.mkdir(GLM_classInputDir)
@@ -175,7 +183,7 @@ with open(FullStemFile,"r") as stem_file:
 
 
         #Sending jobs to the SLURM scheduler if on Sherlock
-        #Being in this loop this creates an runs a separate job for each file
+        #Being in this loop this creates and runs a separate job for each file
         if use_SLURM:
             job_name = stem[-4:]
             slurm_out_name = os.path.join(OUTPUT_DIR,"slurm_"+stem+".out")
@@ -185,11 +193,22 @@ with open(FullStemFile,"r") as stem_file:
             with open(sub_SLURM_name,"w") as sub_SLURM:
                 sub_SLURM.write("#!/bin/bash\n")
                 sub_SLURM.write("python "+os.path.join(WRAPPERS,"spachete_run.py")+OPTIONS+"\n")
+            
+            dependency = "--dependency=afterany:"+jnums[ind-max_slurm] if ind >= max_slurm else None
+            print "Job name:",stem
+            print "Dependency:",dependency
+            print "=="
+  
+            slurm_cmds = ["sbatch","-p","horence","--mem=60000","--time=48:00:00",
+                          "-o",slurm_out_name,"-e",slurm_err_name,"-J",job_name]
+            if dependency:
+                slurm_cmds.append(dependency)
 
-            subprocess.call(["sbatch","-p","horence","--mem=60000","--time=48:00:00",
-                             "-o",slurm_out_name,"-e",slurm_err_name,"-J",job_name,sub_SLURM_name],
-                             stdout=machete_out,stderr=machete_err)
+            slurm_cmds.append(sub_SLURM_name)
+            response = subprocess.check_output(slurm_cmds)
 
+            job_num = re.findall("Submitted batch job (.*)",response)[0]
+            jnums.append(job_num)
 
         #This is for multithreading w/out submitting a SLURM job (comment out if on SLURM)
         #Does not submit any jobs but does run all the files in parallel.
@@ -203,6 +222,8 @@ with open(FullStemFile,"r") as stem_file:
                                                "--circref-dir",CIRCREF],
                                                stdout=machete_out,stderr=machete_err))
 
+
+print 'Job nums:',jnums
 
 #Force all the jobs to complete before exiting
 for p_ind in range(len(processes)):

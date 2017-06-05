@@ -15,8 +15,9 @@ INSTALLDIR=${4}
 
 ##ml load python/2.7.5
 #RB 11/22/16: changed -l parameter (read length) from 40 to 36 to match SPORK's use of 36
+#RB 4/4/16: I should pass the length as a parameter
 python ${INSTALLDIR}/SplitFastaforBadFJ.py -i ${FarJuncFasta} -l 36 -o ${BadFJDir}
 
 # Removing former references to ${STEM}
-echo "Fasta sequences split into 40bp reads - LenientBadFJ_SLURM.sh complete" >> ${SPORKDir}/MasterError.txt
+echo "Fasta sequences split into 36bp reads - LenientBadFJ_SLURM.sh complete" >> ${SPORKDir}/MasterError.txt
 echo "Unable to tell if BadFJ and BadFJ ver2 alignments complete." >> ${SPORKDir}/MasterError.txt
