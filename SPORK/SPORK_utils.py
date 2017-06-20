@@ -43,6 +43,11 @@ def get_reference_and_gtf_from_mode(ref_dir,abs_path,mode="hg19"):
         gtf_path = os.path.join(abs_path,"gtfs","hg19_gtfs")
         reference = os.path.join(reference,"hg19_genome")
 
+    elif mode == "grch38":
+        sys.stdout.write('SPORK: Reference using grch38\n')
+        gtf_path = os.path.join(abs_path,"gtfs","grch38_gtfs")
+        reference = os.path.join(reference,"grch38_genome")
+
     elif mode == "mm10":
         sys.stdout.write('SPORK: Reference using mm10\n')
         gtf_path = os.path.join(abs_path,"gtfs","mm10_gtfs")
@@ -340,8 +345,8 @@ def find_splice_inds_v2(denovo_junctions,constants_dict):
             accs = splice_dict[jct_ind][splice_ind]['acc']
             
             #NOTE Just a print out to check for multimappings
-            if len(dons) > 1 or len(accs) > 1:
-                sys.stdout.write('MULTIMAPPING: '+jct_ind+'_'+splice_ind+'\n')
+            #if len(dons) > 1 or len(accs) > 1:
+            #    sys.stdout.write('MULTIMAPPING: '+jct_ind+'_'+splice_ind+'\n')
 
             for don,acc in itertools.product(dons,accs):
                 best_don,best_acc = compare_don_acc(best_don,best_acc,don,acc)
@@ -904,10 +909,14 @@ def generate_gtfs(gtf_path,allowed_feature_types=["exon"]):
         #sys.stdout.write("Reading in GTF file "+abs_gtf_file_path+"\n")
         with open(abs_gtf_file_path,"r") as gtf_file:
             for gtf_line in gtf_file.readlines():
+                #RB 6/6/17: Try to skip common header lines to avoid parsing error
+                if gtf_line[0] == '#' or gtf_line[0] == '@':
+                    continue
                 gtf = GTFEntry(gtf_line)
                 if gtf.feature in allowed_feature_types:
                     gtfs.append(gtf)
 
+    sys.stdout.write('Len GTFs: '+str(len(gtfs))+'\n')
     return gtfs
 
 ########################
@@ -953,20 +962,28 @@ def get_jct_gtf_info(junctions,gtfs,constants_dict):
             chrom_gtfs_acc[chrom+acc_gtf.strand].append(acc_gtf)
             chrom_acc_libs[chrom+acc_gtf.strand].append(acc_gtf.acceptor)
 
+    sys.stdout.write('GTF Finder don chroms: '+str(chrom_gtfs_don.keys())+'\n')
+    sys.stdout.write('GTF Finder acc chroms: '+str(chrom_gtfs_acc.keys())+'\n')
+
     # Find the closest gtfs to donor and acceptor
-    for junction in junctions:
-        jct_ind = junctions.index(junction)
+    for jct_ind,junction in enumerate(junctions):
         #message = "Finding gtf info ("+str(jct_ind)+"/"+str(len(junctions))+")"
         #write_time(message,time.time(),constants_dict["timer_file_path"])
         closest_results = find_closest_gtf(junction,chrom_gtfs_don,chrom_gtfs_acc,chrom_don_libs,chrom_acc_libs)
         if closest_results["donor"]:
             gtf = closest_results["donor"]
             junction.donor_sam.gtf = gtf
+            sys.stdout.write('Donor gtf:'+str(gtf)+'\n')
+            sys.stdout.write('Junction:'+str(junction)+'\n')
+            sys.stdout.write('----\n')
             
         if closest_results["acceptor"]:
             gtf = closest_results["acceptor"]
             junction.acceptor_sam.gtf = gtf
-            
+            sys.stdout.write('Acc gtf:'+str(gtf)+'\n')
+            sys.stdout.write('Junction:'+str(junction)+'\n')
+            sys.stdout.write('----\n')
+           
 
 #################################
 #        Find Closest GTF       #

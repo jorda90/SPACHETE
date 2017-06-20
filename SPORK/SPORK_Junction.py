@@ -258,6 +258,7 @@ class Junction(object):
 
         #If a different string was passed in or the specified gtf doesn't exist
         else:
+            sys.stderr.write(str(self)+'\n')
             sys.stderr.write("SPORK ERROR: in Junction boundary dist, incorrect str or gtf doesn't exist\n")
             sys.exit(1)
 

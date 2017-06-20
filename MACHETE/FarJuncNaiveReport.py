@@ -11,7 +11,8 @@ Created on Wed Sep 16 16:12:27 2015
 ## Also creates class input files for Far Junctions (R1 = FJ, R2 = something else)
 
 # This program then tells if read partners "makes sense" or not
-# final Output categories -- [0] R1 junc name
+# final Output columns -- 
+            #   [0] R1 junc name
             #   [1] genome - R2 location < 100mill bp away
             #   [2] genome anomaly - R2 location > 100mill bp away
             #   [3] genome p value

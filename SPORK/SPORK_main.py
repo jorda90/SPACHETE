@@ -475,29 +475,44 @@ for file_name in file_names:
         write_time("About to call reverse on ["+str(len(reverse_jcts))+"]",time.time(),timer_file_path)
         get_jct_gtf_info(reverse_jcts,gtfs,constants_dict)
         write_time("Time to get jct gtf info backwards ["+str(len(reverse_jcts))+"]",start_time,timer_file_path)
-        
+        sys.stdout.write("SPORK: getting gtf info for ["+str(len(denovo_junctions))+"] junctions\n")
+
         gtf_denovo_junctions = []
         for jct_ind in range(len(denovo_junctions)):
             forward_jct = forward_jcts[jct_ind]
             reverse_jct = reverse_jcts[jct_ind]
             #sys.stdout.write(str(forward_jct)+"\n")
             #sys.stdout.flush()
-            forward_dist = abs(forward_jct.boundary_dist("donor"))+abs(forward_jct.boundary_dist("acceptor"))
-            reverse_dist = abs(reverse_jct.boundary_dist("donor"))+abs(reverse_jct.boundary_dist("acceptor"))
-            
-            #For tracking NUP214-XKR3, which was getting reported backwards and incorrectly (correct now)
-            #if(forward_jct.donor_sam.str_gene() == "NUP214" or
-            #   forward_jct.acceptor_sam.str_gene() == "NUP214" or
-            #   reverse_jct.donor_sam.str_gene() == "NUP214" or
-            #   reverse_jct.acceptor_sam.str_gene() == "NUP214"):
-            #    sys.stdout.write("===========================\n")
-            #    sys.stdout.write(forward_jct.log_string())
-            #    sys.stdout.write(reverse_jct.log_string())
+            forward_don = forward_jct.donor_sam.gtf
+            forward_acc = forward_jct.acceptor_sam.gtf
+            forward_anon = forward_don and forward_acc
 
-            if forward_dist < reverse_dist:
+            reverse_don = forward_jct.donor_sam.gtf
+            reverse_acc = forward_jct.acceptor_sam.gtf
+            reverse_anon = forward_don and forward_acc
+
+            if not forward_anon and not reverse_anon:
+                continue
+
+            elif forward_anon and not reverse_anon:
                 gtf_denovo_junctions.append(forward_jct)
-            else:
+
+            elif reverse_anon and not forward_anon:
                 gtf_denovo_junctions.append(reverse_jct)
+
+            else:
+                forward_don_dist = abs(forward_jct.boundary_dist("donor"))
+                forward_acc_dist = abs(forward_jct.boundary_dist("acceptor"))
+                reverse_don_dist = abs(reverse_jct.boundary_dist("donor"))
+                reverse_acc_dist = abs(reverse_jct.boundary_dist("acceptor"))
+                
+                forward_dist = forward_don_dist+forward_acc_dist
+                reverse_dist = reverse_don_dist+reverse_acc_dist
+
+                if forward_dist < reverse_dist:
+                    gtf_denovo_junctions.append(forward_jct)
+                else:
+                    gtf_denovo_junctions.append(reverse_jct)
 
         denovo_junctions = gtf_denovo_junctions
         write_time("Time to get full jct gtf info "+R_file_name,start_get_jct_gtf_info,timer_file_path)

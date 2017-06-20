@@ -167,6 +167,7 @@ for reportfile in glob.glob(reportsDir+ "*" + args.stem + "*naive*.txt"):
         if line_raw[0]=="@":
             continue
         
+        #These are getting the gene1 and gene2 names
         exonL=line_raw.strip().split("\t")[0].split(":")[1]       
         exonR=line_raw.strip().split("\t")[0].split(":")[4]
         
@@ -188,6 +189,8 @@ for reportfile in glob.glob(reportsDir+ "*" + args.stem + "*naive*.txt"):
                 exonL = line_raw.strip().split("\t")[0].replace("|",":").split(":")[1]
                 exonR = line_raw.strip().split("\t")[0].replace("|",":").split(":")[3]
                 
+                #If the exon is both in the naive report and the KNIFE linear GLM above 0.8 pP
+                #Then keep storing the maximum count
                 if exonL in exonDict:
                     if int(line_raw.strip().split("\t")[1]) > exonDict[exonL]:
                         exonDict[exonL]= int(line_raw.strip().split("\t")[1])

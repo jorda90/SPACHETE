@@ -1,3 +1,4 @@
+from spachete_post_process import post_process #<-- for the appended report
 from argparse import ArgumentParser
 from bisect import bisect_left
 import pandas as pd
@@ -208,6 +209,41 @@ def filter_glm_class_file(glm_input_name,used_ids_name,timer_file_path):
     os.rename(filtered_glm_outupt_name,glm_input_name)
     write_time("Filter out reads used in: "+glm_input_name,start_time,timer_file_path)
 
+#RB filter out used ids from the FarJunctionAlignments SAM files
+def filter_sam_files(fj_alignment_names,used_ids_name,timer_file_path):
+    start_time = time.time()
+    sys.stdout.write("Starting filtering: "+glm_input_name+"\n")
+
+    #Get a set of the used_ids for fast lookup times
+    used_ids = []
+    with open(used_ids_name,"r") as used_ids_file:
+        for used_id in used_ids_file:
+            clean_used_id = used_id.split(" ")[0][1:].strip() #get's rid of starting '@'
+            used_ids.append(clean_used_id)
+        used_ids = set(used_ids)
+
+    #Go through each sam file filtering appropriately
+    for sam_name in fj_alignment_names:
+        tmp_out_name = sam_name+'.tmp'
+        unfilt_name = sam_name+'.unfiltered'
+
+        with open(sam_name,'r') as f_in, open(tmp_out_name,'w') as filt, open(unfilt_name,'w') as unfilt:
+            for line in f_in:
+                if line[0] == '@':
+                    filt.write(line)
+                    unfilt.write(line)
+                    continue
+                
+                read_id = line.split("\t")[0].strip()
+                if read_id not in used_ids:
+                    filt.write(line)
+                unfilt.write(line)
+
+        #Overwrite the original with filt since made unfilt in parallel
+        os.rename(tmp_out_name,sam_name)
+
+    write_time("Filter out reads used in FarJunctionAlignments/<STEM>/*.sams",start_time,timer_file_path)
+
 
 
 subprocess.check_call("rm -f {LOG_DIR}/*".format(LOG_DIR=LOG_DIR),shell=True)
@@ -326,6 +362,11 @@ for index in range(1,NUM_FILES + 1):
 checkProcesses(processes)
 write_time("AlignUnalignedtoFJ inds",start_time,timer_file_path)
 
+##Filter out reads used to build the SPORK junctions before they get to the GLM.
+#used_ids_name = os.path.join(OUTPUT_DIR,"spork_out","used_read_ids.txt")
+#fj_alignment_names = glob.glob(os.path.join(OUTPUT_DIR,"FarJunctionAlignments","*","*.sam"))
+#filter_sam_files(fj_alignment_names,used_ids_name,timer_file_path)
+
 #
 #
 ###make FJ naive report
@@ -438,7 +479,13 @@ transcriptomeIndex = ""
 regIndex = ""
 juncIndex = ""
 
-if MODE.lower() == "hg19":
+if MODE.lower() == "grch38":
+    genomeIndex = os.path.join(CIRCREF,"grch38_genome")
+    transcriptomeIndex = os.path.join(CIRCREF,"grch38_transcriptome")
+    regIndex = os.path.join(CIRCREF,"grch38_junctions_reg")
+    juncIndex = os.path.join(CIRCREF,"grch38_junctions_scrambled")
+
+elif MODE.lower() == "hg19":
     genomeIndex = os.path.join(CIRCREF,"hg19_genome")
     transcriptomeIndex = os.path.join(CIRCREF,"hg19_transcriptome")
     regIndex = os.path.join(CIRCREF,"hg19_junctions_reg")
@@ -450,7 +497,9 @@ elif MODE.lower() == "mm10":
     regIndex = os.path.join(CIRCREF,"mm10_junctions_reg")
     juncIndex = os.path.join(CIRCREF,"mm10_junctions_scrambled")
 
-   
+else:
+    sys.stderr.write("ERROR: Unrecognized mode in spachete_run.py: ["+MODE.lower()+"] exiting\n")
+    sys.exit(1)
 
 # for BadFJ we Align FarJunc fasta file to the above indices with the following bowtie parameters:
 # A minimum alignment score corresponding to 4 mismatches per 100 base pairs, no N ceiling, and a prohibitive read gap penalty that disallows any read gaps in the fasta sequence or the reference index.  Alignments are found in <FJDir>/BadFJ/<STEM>/<STEM>_BadFJto<ReferenceIndex>.sam.
@@ -884,7 +933,7 @@ checkProcesses(processes)
 write_time("FJIndelsClassID",start_time,timer_file_path)
 print("STATUS:FJ Indels Class Output")
 
-
+#####RB 6/6/17: Moving the unaligned SPORK filtering to right after the FJAlignments are made (~line 330)
 ##Filter out reads used to build the SPORK junctions before they get to the GLM.
 used_ids_name = os.path.join(OUTPUT_DIR,"spork_out","used_read_ids.txt")
 glm_input_name = os.path.join(OUTPUT_DIR,"GLM_classInput",SPORK_STEM_NAME+"_1__output_FJ.txt")
@@ -945,23 +994,24 @@ write_time("Run glm "+str(index),start_time,timer_file_path)
 
 # The AppendNaiveRept.sh shell calls the AppendNaiveRept.py script.  This reads in the IndelsHistogram, BadFJ and BadFJ_ver2 files, and GLM report results and outputs all the results into a single file in /FJDir/reports/AppendedReports/<STEM>_naive_report_Appended.txt
 # j15_id
-start_time = time.time()
-print("STATUS: append naive rpt")
-processes = {}
-for index in range(1,NUM_FILES + 1):
-    stdout = open(os.path.join(LOG_DIR,str(index) + "_out_14AppendRpt.txt"),"w")
-    stderr = open(os.path.join(LOG_DIR,str(index) + "_err_14AppendRpt.txt"),"w")
-    cmd = "{MACHETE_DIR}/AppendNaiveRept.sh {OUTPUT_DIR} {GLM_DIR} {MACHETE_DIR} {OUTPUT_DIR}/reports/glmReports {index}".format(MACHETE_DIR=MACHETE_DIR,OUTPUT_DIR=OUTPUT_DIR,GLM_DIR=GLM_DIR,index=index)
-    print(cmd)
-    popen = subprocess.Popen(cmd,stdout=stdout,stderr=stderr,shell=True)
-    processes[popen] = {"stdout":stdout,"stderr":stderr,"cmd":cmd}
-checkProcesses(processes)
-write_time("Append naive report "+str(index),start_time,timer_file_path)
-print("STATUS: done")
+
+#print("STATUS: append naive rpt")
+#processes = {}
+#for index in range(1,NUM_FILES + 1):
+#    stdout = open(os.path.join(LOG_DIR,str(index) + "_out_14AppendRpt.txt"),"w")
+#    stderr = open(os.path.join(LOG_DIR,str(index) + "_err_14AppendRpt.txt"),"w")
+#    cmd = "{MACHETE_DIR}/AppendNaiveRept.sh {OUTPUT_DIR} {GLM_DIR} {MACHETE_DIR} {OUTPUT_DIR}/reports/glmReports {index}".format(MACHETE_DIR=MACHETE_DIR,OUTPUT_DIR=OUTPUT_DIR,GLM_DIR=GLM_DIR,index=index)
+#    print(cmd)
+#    popen = subprocess.Popen(cmd,stdout=stdout,stderr=stderr,shell=True)
+#    processes[popen] = {"stdout":stdout,"stderr":stderr,"cmd":cmd}
+#checkProcesses(processes)
+#write_time("Append naive report "+str(index),start_time,timer_file_path)
+#print("STATUS: done")
 
 #RB 04/26/17 add a few extra columns to the appended reports file
 #1) The junction consensus sequence
 #2) The emp_pvalue
+
 STEM_FILE = os.path.join(OUTPUT_DIR,"StemList.txt")
 jct_ind_p = r'jct_ind=(.*)'
 for index in range(NUM_FILES):
@@ -969,8 +1019,50 @@ for index in range(NUM_FILES):
     STEM = None
     with open(STEM_FILE,'r') as f:
         STEM = f.readlines()[index].strip()
+
+    KNIFE_GLM = glob.glob(os.path.join(GLM_DIR,'*_linearJuncProbs.txt'))
+    if len(KNIFE_GLM) == 1:
+        KNIFE_GLM = KNIFE_GLM[0]
+    else:
+        KNIFE_GLM = None
+
+    post_process(OUTPUT_DIR,STEM,KNIFE_GLM)
+
+    """
+###################RB 06/06/17: Merging instead of appending naive report
+start_time = time.time()
+print("STATUS: merge naive rpt and glm output to get appended report")
+naive_path = os.path.join(OUTPUT_DIR,'reports',STEM+'_naive_report.txt')
+glm_path = os.path.join(OUTPUT_DIR,'reports','glmReports',STEM+'_FUSION_W_ANOM_AND_INDEL_JUNCPOUT')
+
+appended_dir = os.path.join(OUTPUT_DIR,'reports','AppendedReports')
+if not os.path.exists(appended_dir):
+    os.mkdir(appended_dir)
+
+appended_path = os.path.join(appended_dir,STEM+'_naive_report_Appended.txt')
+
+print('naive_path:',naive_path)
+print('glm_path:',naive_path)
+print('app_path:',appended_path)
+
+naive = pd.read_table(naive_path,sep='\t')
+glm = pd.read_table(glm_path,sep='\t')
+
+#Rename the first naive column to match the first glm column
+naive.rename(columns={'@Junction':'junction'}, inplace=True)
+
+#Merge the two on their only shared column ('junction')
+merged = pd.merge(naive,glm)
+
+print('Naive:',naive.shape,naive.columns)
+print('GLM:',glm.shape,glm.columns)
+print('Merged:',merged.shape,merged.columns)
+
+merged.to_csv(appended_path,sep='\t',index=False)
+
+
     appended_report = os.path.join(OUTPUT_DIR,"reports","AppendedReports",str(STEM)+"_naive_report_Appended.txt")
-    print appended_report
+    
 
     #Build a dict of jct_ind to sequence
     fasta_path = os.path.join(OUTPUT_DIR,"spork_out","novel_junctions.fasta")
@@ -989,7 +1081,7 @@ for index in range(NUM_FILES):
     #Add sequence data as an extra column to the appended report
     df = pd.read_table(appended_report,sep='\t')
     ordered_seqs = []
-    for jct_name in df['@Junction']:
+    for jct_name in df['junction']:
         jct_ind = int(re.findall(jct_ind_p,jct_name)[0])
         ordered_seqs.append(ind_to_seq[jct_ind])
         
@@ -1008,6 +1100,7 @@ for index in range(NUM_FILES):
     #Write out the new appended report (overwrite the old one)
     #df.to_csv(appended_report,sep='\t',index=False)
     df.to_csv(appended_report+'.seq.emp_p',sep='\t',index=False)
+    """
 
 
 write_time("Full run time",full_time,timer_file_path)
