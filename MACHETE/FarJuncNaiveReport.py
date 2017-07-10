@@ -731,6 +731,7 @@ newIDfile = open(args.FJDir+"reports/IDs_"+stem+".txt", mode= "w")
 
 GenomeAndRegReadIDs={}
 
+#Doing double work here
 for line in tempIDfile:
     line=line.strip()
     if "unaligned" in line:

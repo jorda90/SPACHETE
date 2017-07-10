@@ -111,10 +111,10 @@
 ##########################################
 #       FusionMap Positive Test          #
 ##########################################
-#KNIFE_DIR="/scratch/PI/horence/rob/KNIFE_dirs/knife_outputs/hg19_fm_positive_05_04_17"
-#OUT_DIR="/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/fm_pos_06_13_17"
+KNIFE_DIR="/scratch/PI/horence/rob/KNIFE_dirs/knife_outputs/hg19_fm_positive_05_04_17"
+OUT_DIR="/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/fm_pos_06_23_17"
 #MODE="hg19"
-#MODE="grch38"
+MODE="grch38"
 
 #####################################
 #             Fetal Test            #
@@ -153,14 +153,6 @@
 #KNIFE_DIR="/scratch/PI/horence/rob/KNIFE_dirs/knife_outputs/ovarian2014_subset5"
 #OUT_DIR="/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/ovarian2014_subset5_05_17_17"
 #MODE="hg19"
-
-#############################
-#    Natalie ES Cells       #
-#############################
-KNIFE_DIR="/scratch/PI/horence/rob/KNIFE_dirs/knife_outputs/hg19_es_cells_06_14_17"
-OUT_DIR="/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/natalie_es_cells_06_14_17"
-MODE="grch38"
-STEM_INCLUDE_ONLY_LIST=("E14_S"" shZ_S")
 
 #####################################
 #                                   #

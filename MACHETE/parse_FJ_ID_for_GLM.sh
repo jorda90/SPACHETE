@@ -23,6 +23,7 @@ STEM=`awk 'FNR == '${TASK_ID}' {print $1}' ${STEMFILE}`
 
 FJ_Outputfile=${GLM_class_inputs}${STEM}_1__output_FJ.txt
 
+#Might not be necessary
 for file in ${1}/reports/IDs*${STEM}*.txt
 do
 	sed '1d' ${file} | grep -v "Unmapped\|unaligned" > ${FJ_Outputfile}

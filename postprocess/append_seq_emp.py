@@ -6,7 +6,7 @@
 #
 # Creation Date : 26-04-2017
 #
-# Last Modified : Tue 06 Jun 2017 04:28:00 PM PDT
+# Last Modified : Wed 05 Jul 2017 05:14:06 PM PDT
 #
 # Created By : Rob Bierman
 #
@@ -43,7 +43,7 @@ def merge_for_appended(app_rep_path):
     merged = pd.merge(naive,glm)
 
     #os.rename(app_rep_path,app_rep_path+'.old')
-    out_path = STEM+'.txt'
+    out_path = STEM+'.txt.appended'
     merged.to_csv(out_path,sep='\t',index=False)
     return out_path
 
@@ -54,12 +54,11 @@ def add_seq_emp_columns(appended_rep_path,output_path=None):
     #A bit messy to get the STEM
     #1) The junction consensus sequence
     #2) The emp_pvalue
-    #If not given then just go ahead an overwrite the file
     STEM = os.path.basename(app_rep_path).split('_naive_report_Appended')[0]
     OUTPUT_DIR = app_rep_path.split('/reports/')[0]
 
     if not output_path:
-        output_path = appended_report_path
+        output_path = STEM+'seq_appended_report.txt'
 
     NUM_FILES = 1
     jct_ind_p = r'jct_ind=(.*)'
@@ -116,12 +115,16 @@ def add_seq_emp_columns(appended_rep_path,output_path=None):
 #               Main                     #
 ##########################################
 if __name__ == '__main__':
-    app_rep_log = '/scratch/PI/horence/rob/SPACHETE_dirs/current_finished_reports.csv'
+
+    #Make a txt file, where each line is the full path to the appended report output file, eg:
+    #/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/CML_uconn_04_24_17/SRR3192409/reports/AppendedReports/SRR3192409_naive_report_Appended_seq_emp_p.txt
+    #/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/CML_uconn_04_24_17/SRR3192410/reports/AppendedReports/SRR3192410_naive_report_Appended_seq_emp_p.txt
+    app_rep_log = 'woo.txt'
 
     #Append seq and emp
     with open(app_rep_log,'r') as app_rep_f:
         for line in app_rep_f:
-            app_rep_path, tag = line.split(',')
+            app_rep_path = line.strip()
             print app_rep_path
 
             new_app_rep_path = merge_for_appended(app_rep_path)
