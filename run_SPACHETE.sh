@@ -111,10 +111,10 @@
 ##########################################
 #       FusionMap Positive Test          #
 ##########################################
-KNIFE_DIR="/scratch/PI/horence/rob/KNIFE_dirs/knife_outputs/hg19_fm_positive_05_04_17"
-OUT_DIR="/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/fm_pos_06_23_17"
+#KNIFE_DIR="/scratch/PI/horence/rob/KNIFE_dirs/knife_outputs/hg19_fm_positive_05_04_17"
+#OUT_DIR="/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/fm_pos_06_23_17"
 #MODE="hg19"
-MODE="grch38"
+#MODE="grch38"
 
 #####################################
 #             Fetal Test            #
@@ -135,9 +135,9 @@ MODE="grch38"
 #####################################
 #          Engstrom                 #
 #####################################
-#KNIFE_DIR="/scratch/PI/horence/gillian/Engstrom/circpipe_engstrom"
-#OUT_DIR="/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/engstrom_4_28_17"
-#MODE="hg19"
+KNIFE_DIR="/scratch/PI/horence/gillian/Engstrom/circpipe_engstrom"
+OUT_DIR="/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/engstrom_09_10_17"
+MODE="hg19"
 
 #############################
 #      RNaseR samples       #
@@ -153,6 +153,14 @@ MODE="grch38"
 #KNIFE_DIR="/scratch/PI/horence/rob/KNIFE_dirs/knife_outputs/ovarian2014_subset5"
 #OUT_DIR="/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/ovarian2014_subset5_05_17_17"
 #MODE="hg19"
+
+#############################
+#       Massa samples       #
+#############################
+#KNIFE_DIR="/scratch/PI/horence/rob/KNIFE_dirs/knife_outputs/massa_test_07_11_17"
+#OUT_DIR="/scratch/PI/horence/rob/SPACHETE_dirs/spachete_outputs/massa_test_08_1_17_flank30"
+#MODE="grch38"
+#FLANK_LEN="30"
 
 #####################################
 #                                   #
